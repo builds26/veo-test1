@@ -91,9 +91,98 @@
 <video id="video" controls style="display:none;"></video>
 
 <script>
-const API_BASE = "https://veo-test-api.onrender.com";
+const API_BASE = "https://veo-test1.onrender.com";
 
 const PRESETS = {
   anchor: "A serious news anchor in a navy suit at a professional news desk reports breaking news with complete sincerity: 'Scientists have confirmed that pigeons are just government drones running low on battery.' Lower-third graphics, studio lighting, deadpan delivery.",
   baby: "A baby in a pinstripe business suit sits behind a CEO desk, slams fist down, says angrily: 'We are NOT meeting Q3 targets, Janet.' Corporate office, dramatic lighting, close-up.",
-  brit: "A man in a tracksuit standing outside a Gre​​​​​​​​​​​​​​​​
+  brit: "A man in a tracksuit standing outside a Greggs at 8am eating a flaky golden cylindrical sausage roll pastry, looks directly at camera, says deadpan: 'This is my Roman Empire.' Manchester high street, grey overcast sky, British accent.",
+  dog: "A golden retriever wearing reading glasses sits at a desk reviewing spreadsheets, sighs heavily, takes a sip from a coffee mug. Modern office, soft window lighting.",
+  aviation: "A plane spotter with a long lens camera at an airport fence suddenly gets excited, says to camera: 'She is coming in HOT today, lads — 47 knot crosswind, watch this.' Runway visible in background, windy day, Manchester airport."
+};
+
+const promptEl = document.getElementById("prompt");
+const modelEl = document.getElementById("model");
+const aspectEl = document.getElementById("aspectRatio");
+const btn = document.getElementById("generateBtn");
+const statusEl = document.getElementById("status");
+const videoEl = document.getElementById("video");
+document.getElementById("apiUrl").textContent = API_BASE;
+
+document.querySelectorAll(".preset").forEach(el => {
+  el.addEventListener("click", () => {
+    promptEl.value = PRESETS[el.dataset.preset] || "";
+    promptEl.focus();
+  });
+});
+
+btn.addEventListener("click", generate);
+
+function setStatus(msg, type = "") {
+  statusEl.className = "status show " + type;
+  statusEl.textContent = msg;
+}
+
+async function generate() {
+  const prompt = promptEl.value.trim();
+  if (!prompt) { setStatus("Enter a prompt first.", "error"); return; }
+
+  btn.disabled = true;
+  btn.textContent = "Submitting...";
+  videoEl.style.display = "none";
+  setStatus("Submitting to Veo...");
+
+  try {
+    const res = await fetch(`${API_BASE}/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt, model: modelEl.value, aspect_ratio: aspectEl.value }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
+    const data = await res.json();
+    const taskId = data?.data?.taskId || data?.taskId || data?.task_id;
+    if (!taskId) throw new Error("No taskId: " + JSON.stringify(data));
+    setStatus(`Job ${taskId} submitted. Polling...`);
+    btn.textContent = "Generating...";
+    pollStatus(taskId);
+  } catch (e) {
+    setStatus("Error: " + e.message, "error");
+    btn.disabled = false;
+    btn.textContent = "Generate";
+  }
+}
+
+function pollStatus(taskId) {
+  const startTime = Date.now();
+  const interval = setInterval(async () => {
+    const elapsed = Math.floor((Date.now() - startTime) / 1000);
+    if (elapsed > 300) {
+      clearInterval(interval);
+      setStatus(`Timed out after 5 min.`, "error");
+      btn.disabled = false; btn.textContent = "Generate"; return;
+    }
+    try {
+      const res = await fetch(`${API_BASE}/status/${taskId}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const info = data?.data || data;
+      const videoUrl = info?.response?.resultUrls?.[0] || info?.resultUrls?.[0] || info?.videoUrl || info?.video_url;
+      const jobStatus = info?.status || info?.state || "processing";
+      setStatus(`Status: ${jobStatus} · ${elapsed}s`);
+      if (videoUrl) {
+        clearInterval(interval);
+        setStatus(`✅ Done in ${elapsed}s`, "success");
+        videoEl.src = videoUrl;
+        videoEl.style.display = "block";
+        btn.disabled = false; btn.textContent = "Generate";
+      } else if (jobStatus === "failed" || jobStatus === "error") {
+        clearInterval(interval);
+        setStatus(`Job failed: ${JSON.stringify(info)}`, "error");
+        btn.disabled = false; btn.textContent = "Generate";
+      }
+    } catch (e) { console.warn("Poll error:", e); }
+  }, 5000);
+}
+</script>
+</body>
+</html>
